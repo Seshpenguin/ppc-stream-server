@@ -5,7 +5,8 @@
 > even going as far as running small AppleScripts over ssh with osascript to do things like adjust the audio levels.
 
 > It also didn't really have problems understanding
-> the constraints of developing on OS X Leopard and using the old gcc and Xcode toolchain (even considering subtle details like the big-endian nature of the ppc64 G5).
+> the constraints of developing on OS X Leopard and using the old gcc and Xcode toolchain (even considering subtle details like the big-endian nature of the ppc64 G5, or using PowerPC
+> specific assembly instructions like using lwsync as a memory barrier across threads).
 
 > Thinking about it, this could make for an interesting LLM benchmark. Either way, now I can listen to my vinyls over the network from a Power Mac G5 using code written
 > by a frontier LLM. This has got to be a pretty unique setup :)
@@ -21,8 +22,8 @@ Built for a specific use case: a Power Mac G5 receiving audio from a vinyl turnt
 ## Architecture
 
 ```
-[Audio Source] --> [Mac Line In] --> AudioDeviceIOProc --> ring_buf --> client 1 (stream_receive.sh)
-                                    (512 frames/11.6ms)            --> client 2
+[Audio Source] --> [Mac Line In] --> AudioDeviceIOProc --> ring_buf --> client 1 (stream_receiver.py)
+                                    (512 frames/11.6ms)            --> client 2 (stream_receive.sh)
                                                                    --> ... up to 32 clients
 ```
 
@@ -45,14 +46,16 @@ A single `AudioDeviceIOProc` registered directly on the HAL device fires at the 
 
 ## Files
 
-| File                    | Description                                             |
-|-------------------------|---------------------------------------------------------|
+| File                    | Description                                              |
+|-------------------------|----------------------------------------------------------|
 | `audio_stream_server.c` | Main server — captures Line In and streams to TCP clients |
-| `audio_capture.c`       | Standalone capture tool (writes PCM to stdout)          |
+| `audio_capture.c`       | Standalone capture tool (writes PCM to stdout)           |
 | `audio_info.c`          | Diagnostic tool — shows input device, source, and volume |
-| `set_input.c`           | Utility to switch between Line In and S/PDIF Digital In |
-| `stream_receive.sh`     | Linux client script — connects and plays audio          |
-| `stream_send.sh`        | Legacy sender script (replaced by audio_stream_server)  |
+| `set_input.c`           | Utility to switch between Line In and S/PDIF Digital In  |
+| `stream_receiver.py`    | Qt6/Kirigami GUI client with visualiser and volume control |
+| `qml/Main.qml`          | QML frontend for the GUI client                          |
+| `stream_receive.sh`     | Minimal CLI client script — connects and plays audio     |
+| `stream_send.sh`        | Legacy sender script (replaced by audio_stream_server)   |
 
 ## Deploying on a PPC Mac
 
@@ -175,13 +178,44 @@ launchctl load ~/Library/LaunchAgents/com.g5.audiostream.plist
 
 ## Connecting from a Linux client
 
-### Requirements
+### GUI client (PPC Stream Receiver)
+
+![PPC Stream Receiver](docs/kirigami-frontend.png)
+
+The recommended way to connect is the Qt6/Kirigami GUI client. It provides real-time spectrum visualisation, volume control, bitrate monitoring, and native KDE Plasma integration via `QAudioSink` (no subprocess piping).
+
+#### Requirements
+
+- Python 3
+- PyQt6
+- NumPy
+- Kirigami (KF6) and `qqc2-desktop-style` for native Breeze controls
+
+On Arch/Manjaro:
+
+```bash
+sudo pacman -S python-pyqt6 python-numpy kirigami qqc2-desktop-style
+```
+
+#### Usage
+
+```bash
+python3 ./stream_receiver.py
+```
+
+Enter the host and port, then click **Connect**. The spectrum visualiser shows a Monstercat-style frequency bar display, and the volume slider controls `QAudioSink` output directly.
+
+### CLI client (stream_receive.sh)
+
+For a minimal headless connection, the shell script is still available:
+
+#### Requirements
 
 - `ncat` (from nmap) or `nc`
 - `pacat` (PulseAudio / PipeWire-pulse) — recommended player
 - `ffplay` (from ffmpeg) — alternative
 
-### Usage
+#### Usage
 
 ```bash
 ./stream_receive.sh [host] [port]
