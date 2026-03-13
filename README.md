@@ -2,7 +2,8 @@
 
 > The code in this repository was "agentically engineered", mostly for fun to see if Claude and OpenCode could solve an interesting task with a legacy computer.
 > After some guidance here and there, I would say it's a success, I tasked Claude to use ssh to access the G5 and it was able to remotely compile and test code,
-> even going as far as running small AppleScripts over ssh with osascript to do things like adjust the audio levels.
+> even going as far as running small AppleScripts over ssh with osascript to do things like adjust the audio levels. Later on, I also tasked it to implement iTunes
+> control support, so I could also pipe the system output into the audio mixer and play locally stored music (and also creating an accompanying Qt6 Kirigami Frontend).
 
 > It also didn't really have problems understanding
 > the constraints of developing on OS X Leopard and using the old gcc and Xcode toolchain (even considering subtle details like the big-endian nature of the ppc64 G5, or using PowerPC
