@@ -1,13 +1,13 @@
 # PPC Stream Server
 
 > The code in this repository was "agentically engineered", mostly for fun to see if Claude and OpenCode could solve an interesting task with a legacy computer.
-> After some guidance here and there, I would say it's a success, I tasked Claude to use ssh to access the G5 and it was able to remotely compile and test code, 
+> After some guidance here and there, I would say it's a success, I tasked Claude to use ssh to access the G5 and it was able to remotely compile and test code,
 > even going as far as running small AppleScripts over ssh with osascript to do things like adjust the audio levels.
 
-> It also didn't really have problems understanding 
+> It also didn't really have problems understanding
 > the constraints of developing on OS X Leopard and using the old gcc and Xcode toolchain (even considering subtle details like the big-endian nature of the ppc64 G5).
 
-> Thinking about it, this could make for an interesting LLM benchmark. Either way, now I can listen to my vinyls over the network from a Power Mac G5 using code written 
+> Thinking about it, this could make for an interesting LLM benchmark. Either way, now I can listen to my vinyls over the network from a Power Mac G5 using code written
 > by a frontier LLM. This has got to be a pretty unique setup :)
 
 ![G5 Setup and OpenCode](docs/g5_setup_and_opencode.png)
@@ -16,45 +16,43 @@
 
 A lossless, low-latency audio streaming system that captures line-level audio input from a Power Mac G5 (or any PPC Mac running Mac OS X Leopard) and streams it over the network to one or more clients simultaneously.
 
-Built for a specific use case: a Power Mac G5 receiving mixed audio from a vinyl turntable/CD player setup, streamed live to Linux desktops on the local network.
+Built for a specific use case: a Power Mac G5 receiving audio from a vinyl turntable/CD player setup via its Line In, streamed live to Linux desktops on the local network.
 
 ## Architecture
 
 ```
-[Audio Source] --> [Mac Line In] --> audio_stream_server (TCP :7777)
-                                          |
-                                          +--> client 1 (stream_receive.sh)
-                                          +--> client 2
-                                          +--> ... up to 32 simultaneous clients
+[Audio Source] --> [Mac Line In] --> AudioDeviceIOProc --> ring_buf --> client 1 (stream_receive.sh)
+                                    (512 frames/11.6ms)            --> client 2
+                                                                   --> ... up to 32 clients
 ```
 
-The server runs persistently on the Mac, always capturing from the line input. Clients connect and disconnect freely without affecting the server or each other.
+The server runs persistently on the Mac, always capturing from Line In. Clients connect and disconnect freely without affecting the server or each other.
 
-Internally, the audio capture callback writes into a lock-free ring buffer and wakes per-client writer threads via a condition variable. This ensures the CoreAudio callback never blocks on network I/O, eliminating audio dropouts regardless of client behavior.
+A single `AudioDeviceIOProc` registered directly on the HAL device fires at the true hardware interrupt rate (512 frames / ~11.6 ms). This is key: the higher-level `AudioQueue` API batches buffers and delivers them in bursts every ~92 ms on this hardware, causing audible gaps. The IOProc bypasses that entirely. Each callback converts the HAL's native 32-bit big-endian float samples to 16-bit signed little-endian, writes them into a lock-free ring buffer, and wakes the per-client writer threads via a condition variable. The IOProc never touches the network.
 
 ## Audio Specs
 
-| Property           | Value                              |
-|--------------------|------------------------------------|
-| Format             | PCM 16-bit signed, little-endian   |
-| Sample rate        | 44,100 Hz                          |
-| Channels           | 2 (stereo)                         |
-| Bitrate            | 1,411 kbps                         |
-| Compression        | None (lossless)                    |
-| Capture buffers    | 6 x 20ms (AudioQueue)              |
-| Ring buffer        | ~1.5 seconds (262,144 bytes)       |
-| Transport          | Raw TCP                            |
+| Property        | Value                            |
+|-----------------|----------------------------------|
+| Format          | PCM 16-bit signed, little-endian |
+| Sample rate     | 44,100 Hz                        |
+| Channels        | 2 (stereo)                       |
+| Bitrate         | 1,411 kbps                       |
+| Compression     | None (lossless)                  |
+| HAL buffer      | 512 frames (~11.6 ms)            |
+| Ring buffer     | ~1.5 seconds (262,144 bytes)     |
+| Transport       | Raw TCP                          |
 
 ## Files
 
-| File                       | Description                                              |
-|----------------------------|----------------------------------------------------------|
-| `audio_stream_server.c`    | Main server - captures audio and streams to TCP clients  |
-| `audio_capture.c`          | Standalone capture tool (writes PCM to stdout)           |
-| `audio_info.c`             | Diagnostic tool - shows input device, source, and volume |
-| `set_input.c`              | Utility to switch between Line In and S/PDIF Digital In  |
-| `stream_receive.sh`        | Linux client script - connects and plays audio           |
-| `stream_send.sh`           | Legacy sender script (replaced by audio_stream_server)   |
+| File                    | Description                                             |
+|-------------------------|---------------------------------------------------------|
+| `audio_stream_server.c` | Main server — captures Line In and streams to TCP clients |
+| `audio_capture.c`       | Standalone capture tool (writes PCM to stdout)          |
+| `audio_info.c`          | Diagnostic tool — shows input device, source, and volume |
+| `set_input.c`           | Utility to switch between Line In and S/PDIF Digital In |
+| `stream_receive.sh`     | Linux client script — connects and plays audio          |
+| `stream_send.sh`        | Legacy sender script (replaced by audio_stream_server)  |
 
 ## Deploying on a PPC Mac
 
@@ -71,7 +69,7 @@ Copy the source files to the Mac and compile:
 
 ```bash
 gcc -O2 -o audio_stream_server audio_stream_server.c \
-    -framework CoreAudio -framework AudioToolbox -framework CoreFoundation -lpthread
+    -framework CoreAudio -framework CoreFoundation -lpthread
 
 gcc -O2 -o audio_info audio_info.c \
     -framework CoreAudio -framework AudioToolbox
@@ -121,7 +119,23 @@ Start the server:
 ~/bin/audio_stream_server
 ```
 
-It will print status to stderr and begin listening on port 7777. You can optionally pass a different port as the first argument.
+It will print status to stderr and begin listening on port 7777. On startup you should see:
+
+```
+=== G5 Audio Stream Server ===
+Listening on port 7777
+Device: ID=258 "Built-in Audio"
+Format: 44100 Hz, 16-bit, 2 ch, PCM signed LE
+Bitrate: 1411 kbps (lossless)
+HAL buffer: 512 frames (11.61 ms)
+Ring buffer: 262144 bytes (~1.5 sec)
+Max clients: 32
+Waiting for connections...
+
+Capturing from Line In...
+```
+
+You can optionally pass a different port as the first argument.
 
 To run it in the background persistently:
 
@@ -164,8 +178,8 @@ launchctl load ~/Library/LaunchAgents/com.g5.audiostream.plist
 ### Requirements
 
 - `ncat` (from nmap) or `nc`
-- `ffplay` (from ffmpeg) for playback with stats display
-- PulseAudio or PipeWire
+- `pacat` (PulseAudio / PipeWire-pulse) — recommended player
+- `ffplay` (from ffmpeg) — alternative
 
 ### Usage
 
@@ -179,35 +193,33 @@ Defaults to `192.168.2.102` on port `7777`. Override as needed:
 ./stream_receive.sh 192.168.1.50 7777
 ```
 
-ffplay will show real-time stats including playback position, audio queue buffer level, and master-audio clock sync offset.
+The script auto-detects available players and picks the best one. `pacat` is preferred because it decouples network I/O from the audio callback via an internal ring buffer. `pw-cat` is intentionally avoided as last resort only: it performs a blocking `read()` from stdin inside the PipeWire process callback, which causes regular short stutters when the pipe doesn't have a full quantum of data ready.
 
 ### Manual connection
 
-You can also connect manually with any tool that speaks TCP:
-
 ```bash
-# Using ffplay directly
+# pacat (recommended — lowest latency, no blocking reads)
 ncat 192.168.2.102 7777 --recv-only | \
-    ffplay -nodisp -stats -infbuf \
-           -flags low_delay -fflags nobuffer \
-           -analyzeduration 0 -probesize 32 \
+    pacat --playback --format=s16le --rate=44100 --channels=2 \
+          --latency-msec=200 --process-time-msec=20
+
+# ffplay
+ncat 192.168.2.102 7777 --recv-only | \
+    ffplay -nodisp -stats \
            -f s16le -sample_rate 44100 -ch_layout stereo \
            -i pipe:0
 
-# Using pacat (PulseAudio) for lower latency, no stats
-ncat 192.168.2.102 7777 --recv-only | \
-    pacat --playback --format=s16le --rate=44100 --channels=2 \
-          --latency-msec=50 --process-time-msec=10
-
-# Record to a WAV file using ffmpeg
+# Record to a WAV file
 ncat 192.168.2.102 7777 --recv-only | \
     ffmpeg -f s16le -ar 44100 -ch_layout stereo -i pipe:0 output.wav
 ```
 
 ## Design Notes
 
-- The audio capture callback writes into a shared ring buffer and never touches the network. Per-client writer threads are woken via `pthread_cond_broadcast` when new data arrives, so there is no polling delay and no risk of the capture stalling on a slow client.
-- If a client falls too far behind (more than the ring buffer size), it is skipped ahead to the live position rather than receiving stale audio.
-- The server handles big-endian to little-endian byte conversion on the PPC side using a `lwsync` memory barrier for safe ring buffer publishing. Clients receive standard little-endian PCM with no processing needed.
-- `SIGPIPE` is ignored on the server so a disconnecting client never crashes it.
-- Each client gets a 2-second kernel TCP send buffer (`SO_SNDBUF`) and `TCP_NODELAY` is enabled to minimize latency.
+- **IOProc instead of AudioQueue:** `AudioQueueNewInput` on this hardware batches its buffers and delivers them ~4-5 at a time every ~92 ms rather than one at a time every 20 ms. This causes audible gaps regardless of client-side buffering. Registering an `AudioDeviceIOProc` directly on the HAL device fires at the true hardware rate (512 frames / 11.6 ms) with no batching.
+- **Non-deprecated APIs throughout:** `AudioDeviceCreateIOProcID` / `AudioDeviceDestroyIOProcID` (introduced in 10.5) replace the old `AudioDeviceAddIOProc` / `AudioDeviceRemoveIOProc`. All property queries use `AudioObjectGetPropertyData` rather than the older `AudioDeviceGetProperty` / `AudioHardwareGetProperty`.
+- **PPC endianness:** The HAL delivers 32-bit big-endian IEEE float, which is native on PPC — no byte swap needed on read. The converted 16-bit LE output is written to the ring buffer with a `lwsync` memory barrier before publishing the new write position.
+- **Non-blocking capture:** The IOProc writes into the ring buffer and wakes client writer threads via `pthread_cond_broadcast`. It never touches the network, so a slow or disconnected client cannot stall or crash the capture.
+- **Slow client handling:** If a client falls more than one ring buffer behind, it is skipped ahead to near the live position rather than receiving stale audio or stalling other clients.
+- **`SIGPIPE` ignored:** A disconnecting client never crashes the server.
+- **TCP tuning:** Each client socket gets `TCP_NODELAY` to prevent Nagle buffering and a 2-second kernel send buffer (`SO_SNDBUF`) to absorb short network stalls.
