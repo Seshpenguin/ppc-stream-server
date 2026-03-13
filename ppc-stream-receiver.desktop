@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PPC Stream Receiver
+GenericName=Audio Stream Receiver
+Comment=Stream lossless audio from a PowerPC Mac running the PPC Stream Server.
+Exec=python3 /opt/g5-stream-server/stream_receiver.py
+Icon=audio-speakers
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=audio;stream;ppc;g5;lossless;
+StartupWMClass=ppc-stream-receiver
