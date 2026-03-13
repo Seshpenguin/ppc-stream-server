@@ -2,8 +2,11 @@
 
 > The code in this repository was "agentically engineered", mostly for fun to see if Claude and OpenCode could solve an interesting task with a legacy computer.
 > After some guidance here and there, I would say it's a success, I tasked Claude to use ssh to access the G5 and it was able to remotely compile and test code, 
-> even going as far as running small AppleScripts over ssh with osascript to do things like adjust the audio levels. It also didn't really have problems understanding 
+> even going as far as running small AppleScripts over ssh with osascript to do things like adjust the audio levels.
+
+> It also didn't really have problems understanding 
 > the constraints of developing on OS X Leopard and using the old gcc and Xcode toolchain (even considering subtle details like the big-endian nature of the ppc64 G5).
+
 > Thinking about it, this could make for an interesting LLM benchmark. Either way, now I can listen to my vinyls over the network from a Power Mac G5 using code written 
 > by a frontier LLM. This has got to be a pretty unique setup :)
 
