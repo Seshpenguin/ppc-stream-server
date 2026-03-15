@@ -39,6 +39,10 @@ echo "  Compiling audio_info..."
 gcc -O2 -o "$BIN_DIR/audio_info" "$SCRIPT_DIR/tools/audio_info.c" \
     -framework CoreAudio -framework AudioToolbox -framework CoreFoundation
 
+# PPCStreamServer.app — Cocoa GUI server manager
+echo "  Building PPCStreamServer.app..."
+"$SCRIPT_DIR/cocoa-gui/build_gui.sh"
+
 echo ""
 echo "Done. Built $(ls "$BIN_DIR" | wc -l | tr -d ' ') binaries in $BIN_DIR/"
 ls -lh "$BIN_DIR/"

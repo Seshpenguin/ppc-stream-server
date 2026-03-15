@@ -19,7 +19,7 @@ install-client:
 	install -m 644 ppc-stream-receiver.desktop $(DESTDIR)$(DESKTOP_DIR)/ppc-stream-receiver.desktop
 
 # ── install-server ────────────────────────────────────────────────────────────
-# Installs the Power Mac G5 server components (run after `make build`).
+# Installs the PowerPC Mac server components (run after `make build`).
 
 install-server:
 	install -d $(DESTDIR)$(PREFIX)
@@ -31,5 +31,6 @@ install-server:
 	install -m 755 bin/audio_info          $(DESTDIR)$(PREFIX)/bin/audio_info
 	install -m 755 itunes_server.py        $(DESTDIR)$(PREFIX)/itunes_server.py
 	install -m 755 start_server.sh         $(DESTDIR)$(PREFIX)/start_server.sh
+	cp -R cocoa-gui/PPCStreamServer.app    $(DESTDIR)$(PREFIX)/PPCStreamServer.app
 
 .PHONY: build install-client install-server
