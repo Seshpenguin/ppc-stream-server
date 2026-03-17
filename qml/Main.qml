@@ -222,9 +222,13 @@ Kirigami.ApplicationWindow {
                                      : seekTarget >= 0 ? seekTarget
                                      : itunes.position
                                 enabled: itunes.duration > 0
-                                onMoved: {
-                                    seekTarget = value
-                                    itunes.seekTo(value)
+                                // Only seek on release — avoids spamming the server
+                                // while the user drags the slider.
+                                onPressedChanged: {
+                                    if (!pressed) {
+                                        seekTarget = value
+                                        itunes.seekTo(value)
+                                    }
                                 }
                                 Connections {
                                     target: itunes

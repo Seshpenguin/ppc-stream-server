@@ -307,6 +307,11 @@ class ITunesBackend(QObject):
         self._artwork_dir = tempfile.mkdtemp(prefix="g5art_")
         self._mpris: MprisService | None = None
 
+        # Set while a command POST + follow-up poll is in flight.
+        # Timer-triggered polls skip themselves when this is set, preventing
+        # a pile-up of requests while e.g. dragging the seek slider.
+        self._command_pending = threading.Event()
+
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(int(ITUNES_POLL_S * 1000))
         self._poll_timer.timeout.connect(self._poll)
@@ -414,6 +419,7 @@ class ITunesBackend(QObject):
 
     @pyqtSlot(int)
     def playById(self, db_id: int):
+        self._command_pending.set()
         threading.Thread(
             target=self._post_then_poll, args=(f"/play?id={db_id}",), daemon=True
         ).start()
@@ -425,6 +431,7 @@ class ITunesBackend(QObject):
     @pyqtSlot()
     def cycleRepeat(self):
         """POST /repeat (no mode param = cycle) then re-poll."""
+        self._command_pending.set()
         threading.Thread(
             target=self._post_then_poll, args=("/repeat",), daemon=True
         ).start()
@@ -435,6 +442,7 @@ class ITunesBackend(QObject):
         """Seek iTunes to an absolute position (seconds) and re-poll."""
         if not self._base_url:
             return
+        self._command_pending.set()
         threading.Thread(
             target=self._post_then_poll,
             args=(f"/seek?pos={pos_s:.2f}",),
@@ -444,15 +452,23 @@ class ITunesBackend(QObject):
     def send_command(self, cmd: str):
         if not self._base_url:
             return
+        self._command_pending.set()
         threading.Thread(
             target=self._post_then_poll, args=(f"/{cmd}",), daemon=True
         ).start()
 
     def _post_then_poll(self, path: str):
-        """POST a command, then immediately poll status so the UI updates."""
-        self._post(path)
-        time.sleep(0.3)
-        self._do_poll()
+        """POST a command, then immediately poll status so the UI updates.
+
+        _command_pending is held for the entire duration so that timer-fired
+        polls are suppressed until we have fresh state from the server.
+        """
+        try:
+            self._post(path)
+            time.sleep(0.3)
+            self._do_poll()
+        finally:
+            self._command_pending.clear()
 
     def _post(self, path: str):
         try:
@@ -472,6 +488,10 @@ class ITunesBackend(QObject):
 
     def _poll(self):
         if not self._base_url:
+            return
+        # Skip timer-fired polls while a command is still in flight so that
+        # rapid actions (e.g. dragging the seek slider) don't pile up.
+        if self._command_pending.is_set():
             return
         threading.Thread(target=self._do_poll, daemon=True).start()
 
