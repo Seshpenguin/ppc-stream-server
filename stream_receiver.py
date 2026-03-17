@@ -84,16 +84,29 @@ _IFACE_PROPS = "org.freedesktop.DBus.Properties"
 
 
 def _try_register_mpris(itunes_backend):
-    """Register MPRIS2 on the session bus. Returns MprisService or None."""
+    """Register MPRIS2 on the session bus. Returns MprisService or None.
+
+    dbus-python requires a GLib main loop to dispatch D-Bus messages.  Since
+    Qt owns the process's main loop we spin up a GLib.MainLoop on a dedicated
+    daemon thread so both can run concurrently.
+    """
     try:
         import dbus
         import dbus.service
         import dbus.mainloop.glib
+        from gi.repository import GLib
 
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
         bus = dbus.SessionBus()
-        name = dbus.service.BusName(_MPRIS_BUS_NAME, bus)  # noqa: F841
-        svc = MprisService(bus, itunes_backend)
+        bus_name = dbus.service.BusName(_MPRIS_BUS_NAME, bus)
+        svc = MprisService(bus, bus_name, itunes_backend)
+
+        # Run the GLib event loop on a background thread so D-Bus method calls
+        # and signal emissions are dispatched even though Qt owns the main loop.
+        glib_loop = GLib.MainLoop()
+        t = threading.Thread(target=glib_loop.run, daemon=True, name="glib-dbus")
+        t.start()
+
         print("[MPRIS] Registered org.mpris.MediaPlayer2.G5Stream", file=sys.stderr)
         return svc
     except Exception as e:
@@ -115,10 +128,12 @@ class MprisService:
     which dbus.service.Object's metaclass would not tolerate.
     """
 
-    def __init__(self, bus, itunes_backend):
+    def __init__(self, bus, bus_name, itunes_backend):
         import dbus
         import dbus.service
 
+        # Keep bus_name alive — letting it go out of scope releases the name.
+        self._bus_name = bus_name
         # Store dbus module reference for use in update_* methods.
         self._d = dbus
 
@@ -231,6 +246,10 @@ class MprisService:
             def PropertiesChanged(self, interface, changed, invalidated):
                 pass
 
+            @dbus.service.signal(dbus_interface=_IFACE_PLAYER, signature="x")
+            def Seeked(self, position_us):
+                pass
+
         self._obj = _Obj(bus, _MPRIS_OBJ_PATH)
 
     # ── called from ITunesBackend (main thread) ───────────────────────────────
@@ -243,16 +262,17 @@ class MprisService:
             if track_id
             else "/org/mpris/MediaPlayer2/TrackList/NoTrack"
         )
-        self._metadata = d.Dictionary(
-            {
-                "mpris:trackid": d.ObjectPath(obj_path),
-                "mpris:length": d.Int64(int(info.get("duration", 0.0) * 1_000_000)),
-                "xesam:title": d.String(info.get("title", "")),
-                "xesam:artist": d.Array([info.get("artist", "")], signature="s"),
-                "xesam:album": d.String(info.get("album", "")),
-            },
-            signature="sv",
-        )
+        meta = {
+            "mpris:trackid": d.ObjectPath(obj_path),
+            "mpris:length": d.Int64(int(info.get("duration", 0.0) * 1_000_000)),
+            "xesam:title": d.String(info.get("title", "")),
+            "xesam:artist": d.Array([info.get("artist", "")], signature="s"),
+            "xesam:album": d.String(info.get("album", "")),
+        }
+        art_url = info.get("artUrl", "")
+        if art_url:
+            meta["mpris:artUrl"] = d.String(art_url)
+        self._metadata = d.Dictionary(meta, signature="sv")
         self._emit_changed(
             {
                 "Metadata": self._metadata,
@@ -266,6 +286,7 @@ class MprisService:
 
     def update_position(self, pos_s: float):
         self._position_us = int(pos_s * 1_000_000)
+        self._obj.Seeked(self._position_us)
 
     def _emit_changed(self, changed: dict):
         self._obj.PropertiesChanged(_IFACE_PLAYER, changed, [])
@@ -560,6 +581,9 @@ class ITunesBackend(QObject):
                         "duration": new_dur,
                     }
                 )
+        if self._mpris:
+            self._mpris.update_position(new_pos)
+
         if state_changed:
             self.stateChanged.emit()
             if self._mpris:
@@ -615,6 +639,17 @@ class ITunesBackend(QObject):
         if url != self._artwork_url:
             self._artwork_url = url
             self.artworkChanged.emit()
+            if self._mpris:
+                self._mpris.update_metadata(
+                    {
+                        "id": self._track_id,
+                        "title": self._title,
+                        "artist": self._artist,
+                        "album": self._album,
+                        "duration": self._duration,
+                        "artUrl": url,
+                    }
+                )
 
 
 # ── Monstercat-style spectrum bar visualiser ───────────────────────────────────

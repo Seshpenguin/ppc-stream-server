@@ -79,12 +79,13 @@ Kirigami.ApplicationWindow {
                         enabled: !backend.isConnected
                     }
 
-                    Controls.Label { text: "Port:" }
+                    Controls.Label { text: "Port:"; visible: portSpin.visible }
                     Controls.SpinBox {
                         id: portSpin
                         from: 1; to: 65535; value: 7777
                         editable: true
                         enabled: !backend.isConnected
+                        visible: false
                     }
 
                     Controls.Label {
